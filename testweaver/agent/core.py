@@ -46,8 +46,27 @@ class TestWeaverAgent:
     def generate_tests_for_file(self, service_path: str, extra_instructions: str = "") -> str:
         java_source = self.git.get_file(service_path)
 
-        rag_context = self.rag_index.retrieve_context("accounting service", top_k=5)
+        # 2. Build a generic RAG query based on user input + file name
+    #    - primary: whatever the user asked for in extra_instructions
+    #    - secondary: the Java class name from the path
+    #    - fallback: a neutral default
+        class_name = service_path.split("/")[-1].replace(".java", "")
+        rag_query_parts = []
 
+        if extra_instructions:
+            rag_query_parts.append(extra_instructions)
+
+        rag_query_parts.append(class_name)
+
+        rag_query = " ".join(rag_query_parts).strip() or "test generation for service"
+
+        # Optional debug log (requires logger import)
+        # logger.debug("RAG query for generate_tests_for_file: %r", rag_query)
+
+        # 3. Retrieve context from RAG using this query
+        rag_context = self.rag_index.retrieve_context(rag_query, top_k=5)
+
+        # 4. Build the LLM prompt
         user_msg = f"""
 You must generate JUnit tests for the following Java file:
 
@@ -61,7 +80,7 @@ You must generate JUnit tests for the following Java file:
 {rag_context}
 </context_from_docs>
 
-Additional instructions:
+Additional instructions from the user:
 {extra_instructions}
 
 First, think if any business logic or requirements are unclear.
@@ -69,8 +88,12 @@ If unclear, ask clarifying questions instead of directly generating tests.
 If clear, output ONLY a compilable Java test class.
 """
 
+        # 5. Call LLM with accumulated history + test-generation task prompt
         messages = self._build_messages(user_msg, task_context=self.test_prompt)
         response = self.llm.chat(messages)
+
+        # 6. Update short-term memory
         self.short_term.append(self.session_id, "user", user_msg)
         self.short_term.append(self.session_id, "assistant", response)
+
         return response

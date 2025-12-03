@@ -8,6 +8,10 @@ from ..rag.index import RAGIndex
 from ..rag.loaders.pdf_loader import load_pdf_as_chunks
 from ..rag.loaders.swagger_loader import fetch_swagger_json, summarise_swagger
 from ..agent.core import TestWeaverAgent
+from fastapi import HTTPException
+from testweaver.utils import config as settings
+
+
 
 app = FastAPI(
     title="TestWeaver Agent API",
@@ -92,3 +96,11 @@ def list_rag_docs():
             }
         )
     return docs
+
+@app.delete("/ingest/{doc_id}")
+def delete_doc(doc_id: str):
+    deleted = rag_index.delete(doc_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "deleted", "doc_id": doc_id}
+
