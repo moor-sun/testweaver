@@ -226,6 +226,7 @@
       border: 1px solid transparent;
       border-bottom: none;
       color: var(--text-muted);
+      background: transparent;
     }
 
     .tab.active {
@@ -373,10 +374,11 @@
       border: none;
       outline: none;
       resize: none;
-      max-height: 96px;
+      max-height: 160px;
       min-height: 20px;
       color: var(--text-main);
       font-size: 13px;
+      font-family: var(--font-sans);
     }
 
     .input-hint {
@@ -434,6 +436,10 @@
       color: var(--text-muted);
       border: 1px solid rgba(55, 65, 81, 0.9);
       box-shadow: none;
+      border-radius: 999px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-size: 12px;
     }
 
     .btn-secondary:hover {
@@ -464,7 +470,7 @@
 
     .textarea-small {
       min-height: 60px;
-      max-height: 150px;
+      max-height: 170px;
       font-size: 12px;
     }
 
@@ -478,6 +484,7 @@
       color: #e5e7eb;
       overflow: auto;
       max-height: 100%;
+      white-space: pre;
     }
 
     .badge {
@@ -533,6 +540,60 @@
     input[type="file"] {
       font-size: 11px;
       color: var(--text-muted);
+    }
+
+    /* --- Tables for RAG output --- */
+    .table-wrap {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      border-radius: 12px;
+      background: rgba(2, 6, 23, 0.6);
+    }
+
+    table.rag-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    table.rag-table th,
+    table.rag-table td {
+      border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+      padding: 8px 8px;
+      vertical-align: top;
+      color: #e5e7eb;
+    }
+
+    table.rag-table th {
+      position: sticky;
+      top: 0;
+      background: rgba(15, 23, 42, 0.95);
+      text-align: left;
+      font-weight: 600;
+      color: #cbd5e1;
+      z-index: 1;
+    }
+
+    table.rag-table tr:hover td {
+      background: rgba(34, 197, 94, 0.06);
+    }
+
+    .cell-muted { color: #9ca3af; }
+    .mono { font-family: Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
+
+    .small-btn {
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(55, 65, 81, 0.9);
+      background: #020617;
+      color: #9ca3af;
+      cursor: pointer;
+    }
+    .small-btn:hover {
+      border-color: var(--accent);
+      color: #bbf7d0;
     }
 
     @media (max-width: 900px) {
@@ -731,7 +792,7 @@
                 <input id="pdfFile" type="file" accept="application/pdf" />
               </div>
               <div style="display:flex; gap:8px; align-items:center;">
-                <button id="uploadPdfBtn" class="btn-secondary btn-small">
+                <button id="uploadPdfBtn" class="btn-secondary">
                   Upload &amp; ingest
                 </button>
                 <span id="pdfStatus" class="hint"></span>
@@ -1036,7 +1097,7 @@
 
     generateTestsBtn.addEventListener("click", generateTests);
 
-    // --- RAG: PDF ingest & Swagger & list docs/chunks ---
+    // --- RAG: PDF ingest & Swagger ---
     const pdfFileEl = document.getElementById("pdfFile");
     const uploadPdfBtn = document.getElementById("uploadPdfBtn");
     const pdfStatus = document.getElementById("pdfStatus");
@@ -1094,7 +1155,6 @@
       setStatus("Calling /ingest/swagger…");
 
       try {
-        // As defined: ingest_swagger(url: str) – FastAPI will accept query/form.
         const params = new URLSearchParams({ url });
         const res = await fetch(baseUrl + "/ingest/swagger?" + params.toString(), {
           method: "POST",
@@ -1116,30 +1176,163 @@
       }
     });
 
+    // --- RAG: list docs/chunks (TABLE RENDERING) ---
     const listDocsBtn = document.getElementById("listDocsBtn");
     const listChunksBtn = document.getElementById("listChunksBtn");
     const ragListStatus = document.getElementById("ragListStatus");
     const ragListOutput = document.getElementById("ragListOutput");
 
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setRagHtml(html) {
+      ragListOutput.innerHTML = html;
+    }
+
+    function renderDocsTable(data) {
+      const docs = Array.isArray(data?.docs) ? data.docs : [];
+      if (!docs.length) {
+        setRagHtml(`<div class="cell-muted">No docs returned.</div>`);
+        return;
+      }
+
+      const rows = docs.map((d) => {
+        const docId = d.doc_id ?? d.id ?? "";
+        const meta = d.meta ?? d.payload?.meta ?? {};
+        const type = meta?.type ?? d.type ?? "";
+        const filename = meta?.filename ?? "";
+        const url = meta?.url ?? "";
+        const sessionId = meta?.session_id ?? "";
+        const chunkIndex = meta?.chunk_index ?? "";
+        const totalChunks = meta?.total_chunks ?? "";
+        const source = url || filename || "";
+
+        return `
+          <tr>
+            <td class="mono">${escapeHtml(docId)}</td>
+            <td>${escapeHtml(type)}</td>
+            <td class="mono">${escapeHtml(source)}</td>
+            <td class="mono cell-muted">${escapeHtml(sessionId)}</td>
+            <td class="cell-muted">${escapeHtml(chunkIndex)}</td>
+            <td class="cell-muted">${escapeHtml(totalChunks)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      setRagHtml(`
+        <div class="table-wrap">
+          <table class="rag-table">
+            <thead>
+              <tr>
+                <th>doc_id</th>
+                <th>type</th>
+                <th>source (url/filename)</th>
+                <th>session_id</th>
+                <th>chunk_index</th>
+                <th>total_chunks</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `);
+    }
+
+    function renderChunksTable(data) {
+      const chunks = Array.isArray(data?.chunks) ? data.chunks : [];
+      if (!chunks.length) {
+        setRagHtml(`<div class="cell-muted">No chunks returned.</div>`);
+        return;
+      }
+
+      const rows = chunks.map((c, idx) => {
+        const qdrantId = c.qdrant_id ?? "";
+        const docId = c.doc_id ?? "";
+        const meta = c.meta ?? {};
+        const type = meta?.type ?? "";
+        const filename = meta?.filename ?? "";
+        const url = meta?.url ?? "";
+        const sessionId = meta?.session_id ?? "";
+        const chunkIndex = meta?.chunk_index ?? "";
+        const totalChunks = meta?.total_chunks ?? "";
+        const preview = c.text_preview ?? "";
+        const previewId = `preview-${idx}`;
+
+        return `
+          <tr>
+            <td class="mono">${escapeHtml(qdrantId)}</td>
+            <td class="mono">${escapeHtml(docId)}</td>
+            <td>${escapeHtml(type)}</td>
+            <td class="mono">${escapeHtml(url || filename)}</td>
+            <td class="mono cell-muted">${escapeHtml(sessionId)}</td>
+            <td class="cell-muted">${escapeHtml(chunkIndex)}/${escapeHtml(totalChunks)}</td>
+            <td>
+              <button class="small-btn" data-toggle="${previewId}">View</button>
+              <div id="${previewId}" class="mono cell-muted" style="display:none; margin-top:6px;">
+                ${escapeHtml(preview)}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      setRagHtml(`
+        <div class="table-wrap">
+          <table class="rag-table">
+            <thead>
+              <tr>
+                <th>qdrant_id</th>
+                <th>doc_id</th>
+                <th>type</th>
+                <th>source</th>
+                <th>session_id</th>
+                <th>chunk</th>
+                <th>text_preview</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `);
+
+      ragListOutput.querySelectorAll("button[data-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-toggle");
+          const el = document.getElementById(id);
+          if (!el) return;
+          const isOpen = el.style.display !== "none";
+          el.style.display = isOpen ? "none" : "block";
+          btn.textContent = isOpen ? "View" : "Hide";
+        });
+      });
+    }
+
     listDocsBtn.addEventListener("click", async () => {
       const baseUrl = getBaseUrl();
       ragListStatus.textContent = "Loading /rag/docs…";
       setStatus("Calling /rag/docs…");
+      setRagHtml(`<div class="cell-muted">Loading docs…</div>`);
 
       try {
         const res = await fetch(baseUrl + "/rag/docs?limit=100");
         if (!res.ok) {
           const body = await res.text();
-          ragListOutput.textContent = `Error (${res.status}) from /rag/docs:\n${body || "No details"}`;
+          setRagHtml(`<div class="mono">Error (${res.status}) from /rag/docs:\n${escapeHtml(body || "No details")}</div>`);
           ragListStatus.textContent = "";
           return;
         }
         const data = await res.json();
-        ragListOutput.textContent = JSON.stringify(data, null, 2);
+        renderDocsTable(data);
         ragListStatus.textContent = `${data.count ?? 0} docs.`;
       } catch (e) {
         console.error(e);
-        ragListOutput.textContent = "Failed to reach /rag/docs.";
+        setRagHtml(`<div class="cell-muted">Failed to reach /rag/docs.</div>`);
         ragListStatus.textContent = "";
       } finally {
         setStatus("Idle");
@@ -1150,21 +1343,22 @@
       const baseUrl = getBaseUrl();
       ragListStatus.textContent = "Loading /rag/chunks…";
       setStatus("Calling /rag/chunks…");
+      setRagHtml(`<div class="cell-muted">Loading chunks…</div>`);
 
       try {
         const res = await fetch(baseUrl + "/rag/chunks?limit=20");
         if (!res.ok) {
           const body = await res.text();
-          ragListOutput.textContent = `Error (${res.status}) from /rag/chunks:\n${body || "No details"}`;
+          setRagHtml(`<div class="mono">Error (${res.status}) from /rag/chunks:\n${escapeHtml(body || "No details")}</div>`);
           ragListStatus.textContent = "";
           return;
         }
         const data = await res.json();
-        ragListOutput.textContent = JSON.stringify(data, null, 2);
+        renderChunksTable(data);
         ragListStatus.textContent = `${data.count ?? 0} chunks.`;
       } catch (e) {
         console.error(e);
-        ragListOutput.textContent = "Failed to reach /rag/chunks.";
+        setRagHtml(`<div class="cell-muted">Failed to reach /rag/chunks.</div>`);
         ragListStatus.textContent = "";
       } finally {
         setStatus("Idle");
