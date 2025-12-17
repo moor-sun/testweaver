@@ -69,6 +69,28 @@ class RAGIndex:
         )
         return context
 
+    def search(self, query: str, top_k: int = 5):
+        """Return list of dict-like search hits for the UI layer.
+
+        Delegates to LongTermMemory.search which returns tuples (doc_id, text, meta).
+        This method converts them into a more descriptive dict so `get_rag_hits`
+        can normalize easily.
+        """
+        logger.debug("RAGIndex.search called for query=%r top_k=%d", query, top_k)
+        results = self.store.search(query, top_k=top_k)
+        out = []
+        for doc_id, text, meta in results:
+            out.append({
+                "doc_id": doc_id,
+                "score": None,
+                "meta": meta or {},
+                "text": text,
+            })
+        return out
+
+    # Backwards-compatible alias
+    query = search
+
     def delete(self, doc_id: str) -> bool:
         """Delete a document from the store by id."""
         logger.debug("RAG delete requested for doc_id=%s", doc_id)

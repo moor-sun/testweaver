@@ -35,6 +35,92 @@ rag_index = RAGIndex(lt_memory)
 
 SVC_REPO = os.getenv("GIT_REPO_SVC_ACCOUNTING", "moor-sun/svc-accounting")
 
+import inspect
+
+def _call_rag_method(fn, query: str, top_k: int):
+    """
+    Call a rag method with whatever parameter names it expects.
+    Supports common signatures like:
+      fn(query, top_k=5)
+      fn(query, k=5)
+      fn(text=query, limit=5)
+    """
+    sig = inspect.signature(fn)
+    kwargs = {}
+
+    # best-effort mapping
+    if "query" in sig.parameters:
+        kwargs["query"] = query
+    elif "text" in sig.parameters:
+        kwargs["text"] = query
+    elif len(sig.parameters) >= 1:
+        # if it only takes positional query, pass it positionally
+        return fn(query, **({ "top_k": top_k } if "top_k" in sig.parameters else {}))
+
+    if "top_k" in sig.parameters:
+        kwargs["top_k"] = top_k
+    elif "k" in sig.parameters:
+        kwargs["k"] = top_k
+    elif "limit" in sig.parameters:
+        kwargs["limit"] = top_k
+    elif "n" in sig.parameters:
+        kwargs["n"] = top_k
+
+    return fn(**kwargs)
+
+
+def get_rag_hits(query: str, top_k: int = 5):
+    """
+    Return retrieved chunks for UI display.
+    This auto-detects the retrieval method present on RAGIndex.
+    """
+    if not query:
+        return []
+
+    # Try common method names on RAGIndex
+    candidate_methods = [
+        "search",
+        "query",
+        "similarity_search",
+        "retrieve",
+        "get_relevant",
+        "find_similar",
+    ]
+
+    results = None
+    for name in candidate_methods:
+        fn = getattr(rag_index, name, None)
+        if callable(fn):
+            results = _call_rag_method(fn, query=query, top_k=top_k)
+            break
+
+    if results is None:
+        # No supported retrieval method found
+        return []
+
+    # Normalize results into UI-friendly list of dicts
+    hits = []
+    for r in (results or []):
+        # if result is not dict-like, string it
+        if not isinstance(r, dict):
+            hits.append({
+                "doc_id": "",
+                "score": None,
+                "meta": {},
+                "text_preview": str(r)[:400],
+            })
+            continue
+
+        hits.append({
+            "doc_id": r.get("doc_id") or r.get("id") or r.get("point_id") or "",
+            "score": r.get("score") or r.get("distance"),
+            "meta": r.get("meta") or r.get("payload", {}).get("meta", {}) or {},
+            "text_preview": (r.get("text") or r.get("payload", {}).get("text", "") or "")[:400],
+        })
+
+    return hits
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
@@ -48,8 +134,17 @@ class GenerateTestsRequest(BaseModel):
 @app.post("/chat")
 def chat(req: ChatRequest):
     agent = TestWeaverAgent(req.session_id, rag_index, st_memory, SVC_REPO)
+
+    rag_query = req.query_for_rag or req.message
+    rag_hits = get_rag_hits(rag_query, top_k=5) if rag_query else []
+
     answer = agent.chat(req.message, query_for_rag=req.query_for_rag)
-    return {"reply": answer}
+
+    return {
+        "reply": answer,
+        "rag_hits": rag_hits
+    }
+
 
 from fastapi import HTTPException
 
@@ -57,6 +152,10 @@ from fastapi import HTTPException
 def generate_tests(req: GenerateTestsRequest):
     try:
         agent = TestWeaverAgent(req.session_id, rag_index, st_memory, SVC_REPO)
+
+        # ✅ Build a query to retrieve relevant chunks for test generation
+        rag_query = f"{req.service_path}\n{req.extra_instructions or ''}".strip()
+        rag_hits = get_rag_hits(rag_query, top_k=5) if rag_query else []
 
         result = agent.generate_tests_for_file(
             req.service_path,
@@ -69,6 +168,10 @@ def generate_tests(req: GenerateTestsRequest):
         tc = result.get("test_code", "")
         if not isinstance(tc, str):
             result["test_code"] = str(tc)
+
+        # ✅ Add rag_hits to keep response consistent with /chat
+        result["rag_hits"] = rag_hits
+        result["rag_query"] = rag_query  # optional but helpful for debugging/UI
 
         return result
 

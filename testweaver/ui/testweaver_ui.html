@@ -686,6 +686,7 @@
       <!-- CHAT PANEL -->
       <section id="tab-chat" class="tab-panel active">
         <div id="chatContainer" class="chat-container">
+          <div id="chatRagHits" style="margin-top:10px;"></div>
           <div id="chatEmpty" class="chat-empty">
             <h2>Talk to your TestWeaver Agent</h2>
             <p>
@@ -774,6 +775,7 @@
               <span class="badge" id="testsBadge">No tests yet</span>
             </div>
             <pre id="testsOutput">// Generated test code will appear here…</pre>
+            <div id="testsRagHits" style="margin-top:10px;"></div>
           </div>
         </div>
       </section>
@@ -939,6 +941,8 @@
     }
 
     async function sendChat() {
+      const chatHitsEl = document.getElementById("chatRagHits");
+      if (chatHitsEl) chatHitsEl.innerHTML = "";
       const text = chatInput.value.trim();
       if (!text || sendingChat) return;
 
@@ -983,6 +987,10 @@
 
         const reply = data.reply ?? data.answer ?? JSON.stringify(data, null, 2);
         renderMessage("agent", reply);
+        // Show which chunks were retrieved for this chat response
+        const chatHitsEl = document.getElementById("chatRagHits");
+        renderRagHitsInto(chatHitsEl, data.rag_hits || [], "Chunks retrieved for this chat response");
+
       } catch (e) {
         console.error(e);
         renderMessage("agent", "❌ Could not reach backend. Check URL & CORS.");
@@ -1044,7 +1052,8 @@
       const sessionId = getSessionId();
       const baseUrl = getBaseUrl();
       const extra = extraInstrEl.value || "";
-
+      const hitsEl = document.getElementById("testsRagHits");
+      if (hitsEl) hitsEl.innerHTML = "";
       generatingTests = true;
       generateTestsBtn.disabled = true;
       setTestsStatus("Calling /generate-tests…");
@@ -1083,6 +1092,9 @@
         const code = data.test_code ?? data.code ?? JSON.stringify(data, null, 2);
         testsOutput.textContent = code || "// No test code returned.";
         testsBadge.textContent = "Tests generated";
+        const hitsEl = document.getElementById("testsRagHits");
+        renderRagHitsInto(hitsEl, data.rag_hits || [], "Chunks retrieved for this test generation");
+
       } catch (e) {
         console.error(e);
         testsOutput.textContent = "// Failed to reach /generate-tests. Check URL & server.";
@@ -1191,6 +1203,73 @@
         .replaceAll("'", "&#039;");
     }
 
+    function renderRagHitsInto(containerEl, hits, title = "Chunks retrieved for this request") {
+    if (!containerEl) return;
+
+    if (!Array.isArray(hits) || hits.length === 0) {
+      containerEl.innerHTML = `<div class="cell-muted">${escapeHtml(title)}: none</div>`;
+      return;
+    }
+
+    const rows = hits.map((h, idx) => {
+      const docId = h.doc_id ?? "";
+      const score = h.score ?? "";
+      const meta = h.meta ?? {};
+      const source = meta.url || meta.filename || "";
+      const sessionId = meta.session_id || "";
+      const chunkIndex = meta.chunk_index ?? "";
+      const totalChunks = meta.total_chunks ?? "";
+      const preview = h.text_preview ?? "";
+      const pid = `hitprev-${Date.now()}-${idx}`;
+
+      return `
+        <tr>
+          <td class="mono">${escapeHtml(docId)}</td>
+          <td class="cell-muted">${escapeHtml(score)}</td>
+          <td class="mono">${escapeHtml(source)}</td>
+          <td class="mono cell-muted">${escapeHtml(sessionId)}</td>
+          <td class="cell-muted">${escapeHtml(chunkIndex)}/${escapeHtml(totalChunks)}</td>
+          <td>
+            <button class="small-btn" data-toggle="${pid}">View</button>
+            <div id="${pid}" class="mono cell-muted" style="display:none; margin-top:6px;">
+              ${escapeHtml(preview)}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    containerEl.innerHTML = `
+      <div class="badge" style="margin-bottom:6px;">${escapeHtml(title)}</div>
+      <div class="table-wrap">
+        <table class="rag-table">
+          <thead>
+            <tr>
+              <th>doc_id</th>
+              <th>score</th>
+              <th>source</th>
+              <th>session_id</th>
+              <th>chunk</th>
+              <th>preview</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+    // Toggle preview
+    containerEl.querySelectorAll("button[data-toggle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-toggle");
+        const el = document.getElementById(id);
+        if (!el) return;
+        const open = el.style.display !== "none";
+        el.style.display = open ? "none" : "block";
+        btn.textContent = open ? "View" : "Hide";
+      });
+    });
+  }
     function setRagHtml(html) {
       ragListOutput.innerHTML = html;
     }
